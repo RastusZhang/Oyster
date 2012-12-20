@@ -1,0 +1,3 @@
+http://code.google.com/p/dynamorio/
+http://code.google.com/p/drmemory/
+http://www.ivanlef0u.tuxfamily.org/?p=248
