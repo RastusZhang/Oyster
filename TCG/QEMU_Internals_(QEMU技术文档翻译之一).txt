@@ -1,0 +1,127 @@
+QEMU Internals （QEMU技术文档翻译之一）_vxasm's space_百度空间 用户名:   密码:   登录 注册 vxasm's 
+spacevirtualization, security 主页博客相册|个人档案 |好友  查看文章 
+QEMU Internals （QEMU技术文档翻译之一）2009-08-03 18:34title: QEMU Internals
+      author: vxasm (mail: xasm2008@gmail.com)
+      原文：http://www.qemu.org/qemu-tech.html
+      目录
+      1 导言
+      1.1 特性
+      1.2 X86仿真
+      1.3 ARM仿真
+      1.4 PowerPC仿真
+      1.5 SPARC仿真
+      2 QEMU内部
+      2.1 Qemu和其它仿真器的比较
+      2.可移植的动态翻译
+      2.3 寄存器分配
+      2.4 状态码优化
+      2.5 CPU状态优化
+      2.6 翻译缓存
+      2.7 直接块链接
+      2.8 自修改代码和已翻译代码失效
+      2.9 异常支持
+      2.10 MMU仿真
+      2.11 硬件中断
+      2.12 用户层仿真的具体细节
+      2.12.1 Linux系统调用的翻译
+      2.12.2 Linux的信号
+      2.12.3 clone()系统调用和线程
+      2.12.4 自身虚拟化
+      2.13 参考
+      3 回归测试
+      3.1 'test-i386'
+      3.2 'linux-test'
+      3.3 'qruncom.c'
+      4 索引
+      1 导言
+      1.1 特性
+      QEMU是一个使用可移植动态翻译技术的快速的CPU仿真器。
+      QEMU有两种操作模式：
+      完整系统的仿真。在这种模式下，QEMU仿真了一个完整的系统（通常是一台PC），包括一个处理器和各种外设。它可用来运行不同的操作系统而无需重新启动，或者调试系统代码。
+      用户模式的仿真（只支持Linux）。在这种模式下，QEMU可运行Linux进程在本地CPU上为另一种CPU进行编译。它可用来运行Wine模拟器(http://www.winehq.org) 
+      ，或者方便地进行交叉编译和交叉调试。
+
+      运行QEMU不需要安装主机驱动程序，因此它是非常安全和容易使用的。
+      QEMU基本特性：
+      仅用户空间或完整系统的仿真；
+      通过动态翻译为本地代码来达到合理的速度；
+      可运行在X86和PowerPC主机上，ARM，Sparc32，Alpha和S390等正在测试中；
+      自修改代码支持；
+      精确的异常支持；
+      虚拟CPU是一个可用在其它工程中的库（'qemu/tests/qruncom.c'是个用户模式的例子，介绍了libqemu的使用）；
+
+      QEMU用户模式仿真的特性：
+      通用的Linux系统调用转换器，包含了大多数的ioctls；
+      clone()仿真，使用本地CPU的clone()来为线程使用Linux调度器；
+      准确的信号处理，重新映射主机信号到目标机信号；
+
+      QEMU完整系统仿真的特性：
+      QEMU能使用完整的软件MMU来达到最大的可移植性，或者使用主机系统调用mmap()来模拟目标MMU；
+
+      1.2 X86仿真
+      QEMU的x86目标特性：
+      虚拟X86 CPU支持分段的16位和32位寻址，仿真了LDT/GDT和IDT，VM86模式也支持，可运行DOSEMU；
+      在用户模式仿真中，支持主机的每页长度超过4KB；
+      x86上QEMU能仿真自身；
+      'tests/test-i386'中包含了大量的Linux x86 CPU测试程序，它可以用来测试其它的x86虚拟CPU；
+
+      QEMU的当前限制
+      没有SSE/MMX支持（至今）；
+      没有x86-64支持；
+      IPC syscalls被忽略；
+      没有针对每一种内存访问的情况来测试x86段界限和访问权限（至今），希望在正常使用中只有极少数的操作系统依赖于它；
+      非x86主机的CPU，浮点仿真中用doubleS来代替x86非标准的10字节长的long doubleS，以达到最高的性能；
+
+      1.3 ARM仿真 
+      完整的ARM 7用户层仿真；
+      用户层仿真包含了NWFPE FPU支持；
+      可运行大多数的ARM Linux二进制；
+
+      1.4 PowerPC仿真
+      完整的PowerPC 32位仿真，包括特权指令，FPU和MMU；
+      可运行大多数的PowerPC Linux二进制；
+
+      1.5 SPARC仿真
+      几乎完整的SPARC V8仿真，包括特权指令，FPU和MMU；SPARC V9仿真包括大多数的特权指令，FPU和I/D MMU，但是没有VIS指令；
+      可运行一些32位SPARC Linux二进制；
+
+      QEMU的当前限制
+      标记的add/subtract指令不支持，但可能不会使用它们；
+      IPC syscalls被忽略；
+      128位浮点运算操作不支持，虽然还没有一个真正的CPU执行它们；FCMPE[SD]没有正确执行；浮点异常支持没有经过测试；
+      不是一切都强制对齐；
+      原子指令没有正确执行；
+      Sparc64仿真器还不适用于所有的；
+      2 QEMU内部机制
+      2.1 QEMU和其它仿真器的比较
+      类似于Bochs，QEMU能仿真x86 CPU，但QEMU使用动态编译，因此速度远远超过Bochs。Bochs只能仿真x86 
+      PC，而QEMU可以仿真多种处理器。
+      类似于Valgrind，QEMU使用了用户空间仿真和动态翻译，但Valgrind主要是作为一个内存调试器，而QEMU不支持调试（QEMU可以像Valgrind一样检测出内存访问越界，但是它不能跟踪未初始化数据）。Valgrind的动态翻译器和QEMU的相比，可以生成质量更好的代码（尤其是它的寄存器分配），但是它密切依赖于x86的主机和目标机，也不支持完善的异常和系统仿真。
+      EM86是最接近于用户空间QEMU的工程（并且QEMU仍然使用了它的一部分代码，尤其是ELF文件装载器），但是EM86局限于alpha主机，而且
+      使用了一个支持专用解释器（FX!32数字Win32代码翻译器的解释器部分）。
+      TWIN是个类似于Wine的Windows 
+      API仿真器，它不如Wine准确，但是包含了一个保护模式的x86解释器，以便运行x86的Windows可执行程序。由于大多数的Windows 
+      API是在本地执行，因此这种方法更具有潜力，但是更难于开发，因为在API和x86代码之间交换的所有数据结构和函数参数都要被转换。
+      在QEMU之前，要想把Linux内核当作一个进程来运行，User-mode-Linux是唯一的解决方法，但是QEMU不需要任何主机内核补丁。User-mode-Linux需要大量的内核补丁，而QEMU可以接受未补丁过的Linux内核，这样付出的代价是QEMU更慢。
+      新的Plex86 
+      PC虚拟机和QEMU快速系统仿真器有着同样的思路，它工作时需要一个补丁过的Linux内核（您不能在您的PC上运行相同的内核），不过这个补丁其实是很小的。由于它算是一个PC虚拟机（不是仿真，除了一些特权指令），因此它有可能比QEMU更快些，缺点是需要一个复杂的（和潜在不安全的）主机内核补丁。
+      商业的PC虚拟机（VMWare，VirtualPC，TowOStwo）比QEMU更快，但是它们都需要指定的，专用的和潜在不安全的主机驱动程序。此外，它们无法像仿真器一样提供全面的精确模拟。
+      未完待续。。。
+
+类别：Qemu |  | 添加到搜藏 | 分享到i贴吧 | 浏览(804) | 评论 (0)  上一篇：Bochs-2.3.7的一个整数溢出BUG    
+下一篇：(转) 使用 QEMU 进行系统仿真 相关文章：&#8226;QEMU Internals　　　　　　　　　  
+ 最近读者：登录后，您就出现在这里。
+        BinSys晋国赵简子moonsongustccrelightjiaosibeiustc_wukongmeallien_七夜神魔_
+ 网友评论：
+      
+     发表评论： 
+      内　容：插入表情▼ 闪光字
+
+
+       
+       
+           取消回复
+
+         
+
+&copy;2011 Baidu
